@@ -1,0 +1,137 @@
+/* =========================================================
+   TESTES MANUAIS (SQL Developer: executar como SCRIPT, F5)
+   Requer ddl.sql e insert.sql previamente executados.
+========================================================= */
+
+SET SERVEROUTPUT ON SIZE UNLIMITED;
+
+PROMPT === OBJETOS COMPILADOS ===
+SELECT OBJECT_NAME, OBJECT_TYPE, STATUS
+  FROM USER_OBJECTS
+ WHERE OBJECT_NAME IN (
+       'PKG_ANIMAL', 'PKG_USUARIO', 'PKG_AGENDAMENTO',
+       'TRG_APPOINTMENT_AUDIT'
+ )
+ ORDER BY OBJECT_NAME, OBJECT_TYPE;
+
+PROMPT === ERROS DE COMPILACAO (esperado: nenhuma linha) ===
+SELECT NAME, TYPE, LINE, POSITION, TEXT
+  FROM USER_ERRORS
+ WHERE NAME IN (
+       'PKG_ANIMAL', 'PKG_USUARIO', 'PKG_AGENDAMENTO',
+       'TRG_APPOINTMENT_AUDIT'
+ )
+ ORDER BY NAME, SEQUENCE;
+
+PROMPT === LISTAGEM DOS ANIMAIS ===
+BEGIN
+    PKG_ANIMAL.PR_LISTAR_ANIMAIS_JSON;
+END;
+/
+
+PROMPT === ANIMAIS DA ESPECIE CACHORRO ===
+BEGIN
+    PKG_ANIMAL.PR_LISTAR_ANIMAIS_JSON('Cachorro');
+END;
+/
+
+PROMPT === AUTENTICACAO ===
+BEGIN
+    DBMS_OUTPUT.PUT_LINE(
+        'Correto: ' ||
+        PKG_USUARIO.FN_VALIDATE_USER_PASSWORD(
+            'joao.silva@email.com', 'hash_senha_1'
+        )
+    );
+
+    DBMS_OUTPUT.PUT_LINE(
+        'Incorreto: ' ||
+        PKG_USUARIO.FN_VALIDATE_USER_PASSWORD(
+            'joao.silva@email.com', 'senha_errada'
+        )
+    );
+END;
+/
+
+PROMPT === RESUMO DOS AGENDAMENTOS ===
+BEGIN
+    PKG_AGENDAMENTO.PR_APPOINTMENT_SUMMARY;
+END;
+/
+
+PROMPT === TESTE COMPLETO DA TRIGGER: INSERT, UPDATE E DELETE ===
+SAVEPOINT SP_TESTE_AUDITORIA;
+
+DECLARE
+    V_ANIMAL_ID      T_ANIMAL.ID%TYPE;
+    V_TUTOR_ID       T_USER_PROFILE.ID%TYPE;
+    V_VETERINARIO_ID T_USER_PROFILE.ID%TYPE;
+    V_APPOINTMENT_ID T_APPOINTMENT.ID%TYPE;
+    V_QUANTIDADE     NUMBER := 0;
+BEGIN
+    SELECT A.ID, R.T_USER_PROFILE_ID
+      INTO V_ANIMAL_ID, V_TUTOR_ID
+      FROM T_ANIMAL A
+      JOIN T_ANIMAL_RESP R ON R.T_ANIMAL_ID = A.ID
+     WHERE ROWNUM = 1;
+
+    SELECT MIN(ID)
+      INTO V_VETERINARIO_ID
+      FROM T_USER_PROFILE
+     WHERE PROFILE_TYPE = 'VETERINARIO';
+
+    IF V_VETERINARIO_ID IS NULL THEN
+        RAISE_APPLICATION_ERROR(-20010, 'Veterinario nao encontrado.');
+    END IF;
+
+    INSERT INTO T_APPOINTMENT (
+        APPOINTMENT_TYPE, STATUS, SCHEDULED_START, SCHEDULED_END,
+        PRICE, NOTES, CREATED_AT, UPDATED_AT,
+        T_ANIMAL_ID, T_USER_PROFILE_ID, T_USER_PROFILE_ID2
+    ) VALUES (
+        'CONSULTA', 'AGENDADO',
+        TIMESTAMP '2027-01-15 09:00:00',
+        TIMESTAMP '2027-01-15 09:30:00',
+        80.00, 'Teste INSERT', SYSTIMESTAMP, SYSTIMESTAMP,
+        V_ANIMAL_ID, V_TUTOR_ID, V_VETERINARIO_ID
+    ) RETURNING ID INTO V_APPOINTMENT_ID;
+
+    UPDATE T_APPOINTMENT
+       SET STATUS = 'CONCLUIDO', NOTES = 'Teste UPDATE'
+     WHERE ID = V_APPOINTMENT_ID;
+
+    DELETE FROM T_APPOINTMENT
+     WHERE ID = V_APPOINTMENT_ID;
+
+    DBMS_OUTPUT.PUT_LINE('Auditoria do agendamento ID ' || V_APPOINTMENT_ID || ':');
+
+    FOR R IN (
+        SELECT OPERATION_TYPE, OLD_STATUS, NEW_STATUS,
+               OLD_NOTES, NEW_NOTES
+          FROM T_APPOINTMENT_AUDIT
+         WHERE APPOINTMENT_ID = V_APPOINTMENT_ID
+         ORDER BY ID_AUDIT
+    ) LOOP
+        V_QUANTIDADE := V_QUANTIDADE + 1;
+        DBMS_OUTPUT.PUT_LINE(
+            R.OPERATION_TYPE || ' | status anterior: ' ||
+            NVL(R.OLD_STATUS, 'NULL') || ' | status novo: ' ||
+            NVL(R.NEW_STATUS, 'NULL') || ' | notes anterior: ' ||
+            NVL(R.OLD_NOTES, 'NULL') || ' | notes novo: ' ||
+            NVL(R.NEW_NOTES, 'NULL')
+        );
+    END LOOP;
+
+    IF V_QUANTIDADE <> 3 THEN
+        RAISE_APPLICATION_ERROR(-20011,
+            'Esperados 3 eventos de auditoria; encontrados: ' || V_QUANTIDADE
+        );
+    END IF;
+
+    DBMS_OUTPUT.PUT_LINE('OK: foram registrados INSERT, UPDATE e DELETE.');
+END;
+/
+
+ROLLBACK TO SP_TESTE_AUDITORIA;
+
+PROMPT === FINAL: agendamento de teste e os 3 logs foram desfeitos ===

@@ -1,0 +1,79 @@
+/* =========================================================
+   PACKAGE: PKG_USUARIO
+   Responsabilidade: autenticacao e validacao de usuario.
+   Depende de T_USER.
+========================================================= */
+
+CREATE OR REPLACE PACKAGE PKG_USUARIO AS
+
+    FUNCTION FN_VALIDATE_USER_PASSWORD (
+        P_EMAIL    IN T_USER.EMAIL%TYPE,
+        P_PASSWORD IN T_USER.PASSWORD%TYPE
+    ) RETURN VARCHAR2;
+
+END PKG_USUARIO;
+/
+
+CREATE OR REPLACE PACKAGE BODY PKG_USUARIO AS
+
+    FUNCTION FN_VALIDATE_USER_PASSWORD (
+        P_EMAIL    IN T_USER.EMAIL%TYPE,
+        P_PASSWORD IN T_USER.PASSWORD%TYPE
+    ) RETURN VARCHAR2
+    IS
+        V_PASSWORD T_USER.PASSWORD%TYPE;
+        V_STATUS   T_USER.STATUS%TYPE;
+
+        E_EMAIL_INVALIDO      EXCEPTION;
+        E_SENHA_INVALIDA      EXCEPTION;
+        E_USUARIO_INEXISTENTE EXCEPTION;
+        E_USUARIO_INATIVO     EXCEPTION;
+    BEGIN
+        IF P_EMAIL IS NULL OR TRIM(P_EMAIL) IS NULL THEN
+            RAISE E_EMAIL_INVALIDO;
+        END IF;
+
+        IF P_PASSWORD IS NULL OR TRIM(P_PASSWORD) IS NULL THEN
+            RAISE E_SENHA_INVALIDA;
+        END IF;
+
+        BEGIN
+            SELECT PASSWORD, STATUS
+              INTO V_PASSWORD, V_STATUS
+              FROM T_USER
+             WHERE LOWER(EMAIL) = LOWER(TRIM(P_EMAIL));
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+                RAISE E_USUARIO_INEXISTENTE;
+            WHEN TOO_MANY_ROWS THEN
+                RETURN 'ERROR_MULTIPLE_USERS';
+        END;
+
+        IF UPPER(V_STATUS) <> 'ATIVO' THEN
+            RAISE E_USUARIO_INATIVO;
+        END IF;
+
+        /* Um PASSWORD NULL armazenado nao pode autenticar o usuario. */
+        IF V_PASSWORD IS NULL OR V_PASSWORD <> P_PASSWORD THEN
+            RETURN 'INVALID_PASSWORD';
+        END IF;
+
+        RETURN 'LOGIN_OK';
+
+    EXCEPTION
+        WHEN E_EMAIL_INVALIDO THEN
+            RETURN 'ERROR_INVALID_EMAIL';
+        WHEN E_SENHA_INVALIDA THEN
+            RETURN 'ERROR_INVALID_PASSWORD';
+        WHEN E_USUARIO_INEXISTENTE THEN
+            RETURN 'USER_NOT_FOUND';
+        WHEN E_USUARIO_INATIVO THEN
+            RETURN 'USER_INACTIVE';
+        WHEN VALUE_ERROR THEN
+            RETURN 'ERROR_VALUE';
+        WHEN OTHERS THEN
+            RETURN 'ERROR_UNEXPECTED';
+    END FN_VALIDATE_USER_PASSWORD;
+
+END PKG_USUARIO;
+/

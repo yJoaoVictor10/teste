@@ -1,0 +1,52 @@
+/* =========================================================
+   TRIGGER: TRG_APPOINTMENT_AUDIT
+   A trigger fica como objeto Oracle independente; delega
+   o processamento para PKG_AGENDAMENTO.PR_REGISTRAR_AUDITORIA.
+   Executar apos o package PKG_AGENDAMENTO.
+========================================================= */
+
+CREATE OR REPLACE TRIGGER TRG_APPOINTMENT_AUDIT
+AFTER INSERT OR UPDATE OR DELETE ON T_APPOINTMENT
+FOR EACH ROW
+DECLARE
+    V_OPERACAO VARCHAR2(10);
+    V_ANTERIOR PKG_AGENDAMENTO.T_DADOS_AUDITORIA;
+    V_NOVO     PKG_AGENDAMENTO.T_DADOS_AUDITORIA;
+BEGIN
+    IF INSERTING THEN
+        V_OPERACAO := 'INSERT';
+    ELSIF UPDATING THEN
+        V_OPERACAO := 'UPDATE';
+    ELSIF DELETING THEN
+        V_OPERACAO := 'DELETE';
+    END IF;
+
+    /* Em INSERT, os valores :OLD sao NULL. */
+    IF UPDATING OR DELETING THEN
+        V_ANTERIOR.APPOINTMENT_ID   := :OLD.ID;
+        V_ANTERIOR.APPOINTMENT_TYPE := :OLD.APPOINTMENT_TYPE;
+        V_ANTERIOR.STATUS           := :OLD.STATUS;
+        V_ANTERIOR.SCHEDULED_START  := :OLD.SCHEDULED_START;
+        V_ANTERIOR.SCHEDULED_END    := :OLD.SCHEDULED_END;
+        V_ANTERIOR.PRICE            := :OLD.PRICE;
+        V_ANTERIOR.NOTES            := :OLD.NOTES;
+    END IF;
+
+    /* Em DELETE, os valores :NEW sao NULL. */
+    IF INSERTING OR UPDATING THEN
+        V_NOVO.APPOINTMENT_ID   := :NEW.ID;
+        V_NOVO.APPOINTMENT_TYPE := :NEW.APPOINTMENT_TYPE;
+        V_NOVO.STATUS           := :NEW.STATUS;
+        V_NOVO.SCHEDULED_START  := :NEW.SCHEDULED_START;
+        V_NOVO.SCHEDULED_END    := :NEW.SCHEDULED_END;
+        V_NOVO.PRICE            := :NEW.PRICE;
+        V_NOVO.NOTES            := :NEW.NOTES;
+    END IF;
+
+    PKG_AGENDAMENTO.PR_REGISTRAR_AUDITORIA(
+        P_OPERACAO => V_OPERACAO,
+        P_ANTERIOR => V_ANTERIOR,
+        P_NOVO     => V_NOVO
+    );
+END TRG_APPOINTMENT_AUDIT;
+/
